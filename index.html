@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shoot Data Calculator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: a camera report. Inputs on the left as a stack of camera "slates", a sticky totals column on the right. */
+:root{
+  --paper:#eef0f2; --panel:#ffffff; --ink:#15191e; --muted:#5d6772; --line:#d3d8de;
+  --rec:#c8321f; --rec-soft:#fbe6e2; --dailies:#2f6f8f; --buffer:#8a8f98;
+  --good:#1f7a4d; --warn:#a86400; --crit:#b3261e;
+  --display:"Archivo","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --paper:#111418; --panel:#1a1f25; --ink:#e9edf1; --muted:#98a3ae; --line:#2e363f;
+    --rec:#ff5a44; --rec-soft:#3a1c18; --dailies:#6bb4d6; --buffer:#7b8490;
+    --good:#4cc38a; --warn:#e2a13a; --crit:#ff7b72;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#111418; --panel:#1a1f25; --ink:#e9edf1; --muted:#98a3ae; --line:#2e363f;
+  --rec:#ff5a44; --rec-soft:#3a1c18; --dailies:#6bb4d6; --buffer:#7b8490;
+  --good:#4cc38a; --warn:#e2a13a; --crit:#ff7b72;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{margin:0}
+body{background:var(--paper);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.45}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 16px 48px;display:flex;flex-direction:column;gap:18px}
+header{display:flex;flex-wrap:wrap;gap:12px 24px;align-items:flex-end;justify-content:space-between;border-bottom:2px solid var(--ink);padding-bottom:12px}
+h1{font-family:var(--display);font-weight:800;font-size:30px;letter-spacing:-.01em;margin:0;text-wrap:balance}
+h1 span{color:var(--rec)}
+.sub{color:var(--muted);font-size:13px;max-width:60ch}
+h2{font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase;margin:0;color:var(--muted)}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:18px;align-items:start}
+@media (max-width:980px){.grid{grid-template-columns:minmax(0,1fr)}}
+.col{display:flex;flex-direction:column;gap:14px;min-width:0}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:12px}
+.fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px 12px}
+label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted);font-weight:500;min-width:0}
+select,input[type=number],input[type=text]{font:inherit;font-size:14px;color:var(--ink);background:var(--paper);border:1px solid var(--line);border-radius:4px;padding:7px 8px;width:100%;min-width:0}
+input[type=number]{font-family:var(--mono)}
+select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid var(--rec);outline-offset:1px}
+.seg{display:flex;border:1px solid var(--line);border-radius:4px;overflow:hidden}
+.seg button{flex:1;border:0;border-right:1px solid var(--line);background:var(--paper);color:var(--ink);font:inherit;font-size:13px;padding:7px 6px;cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--ink);color:var(--paper);font-weight:600}
+.cam{border-left:4px solid var(--rec)}
+.camhead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.camhead strong{font-family:var(--display);font-size:16px}
+.tag{font-family:var(--mono);font-size:11px;padding:2px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.tag.H{color:var(--good);border-color:var(--good)} .tag.M{color:var(--warn);border-color:var(--warn)} .tag.L{color:var(--crit);border-color:var(--crit)}
+.readout{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px 14px;border-top:1px dashed var(--line);padding-top:10px}
+.readout div{display:flex;flex-direction:column;min-width:0}
+.readout small{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.readout b{font-family:var(--mono);font-weight:500;font-size:15px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.chartrow{display:flex;gap:14px;flex-wrap:wrap;align-items:center;border-top:1px dashed var(--line);padding-top:10px}
+.chartrow .col{flex:1;min-width:200px;gap:8px}
+.thumb{width:260px;max-width:100%;height:auto;border:1px solid var(--line);border-radius:3px;cursor:pointer;background:#24282e}
+.btn{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--ink);background:var(--panel);color:var(--ink);border-radius:4px;padding:7px 12px;cursor:pointer}
+.btn:hover{background:var(--ink);color:var(--paper)}
+.btn.primary{background:var(--rec);border-color:var(--rec);color:#fff}
+.btn.ghost{border-color:var(--line);color:var(--muted)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.warnline{color:var(--warn);font-size:12px}
+.totals{position:sticky;top:12px}
+.big{font-family:var(--display);font-weight:800;font-size:52px;line-height:1;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.big small{font-size:20px;font-weight:700;color:var(--muted);margin-left:4px}
+.bar{display:flex;height:16px;border-radius:3px;overflow:hidden;background:var(--line)}
+.bar i{display:block;height:100%}
+.legend{display:flex;flex-direction:column;gap:6px}
+.legend div{display:flex;justify-content:space-between;gap:10px;font-size:13px}
+.legend span:first-child{display:flex;align-items:center;gap:8px}
+.legend em{width:10px;height:10px;border-radius:2px;display:inline-block}
+.legend b{font-family:var(--mono);font-weight:500;font-variant-numeric:tabular-nums}
+.sum{border-top:1px solid var(--line);padding-top:8px;font-weight:600}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:right;padding:5px 4px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+th:first-child,td:first-child{text-align:left}
+td{font-family:var(--mono)} td:first-child{font-family:var(--body)}
+th{color:var(--muted);font-weight:500}
+.scroll{overflow-x:auto}
+summary{cursor:pointer}
+code{font-family:var(--mono);font-size:12px}
+.note{font-size:12px;color:var(--muted)}
+dialog{border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:16px;width:min(920px,94vw)}
+dialog::backdrop{background:rgba(0,0,0,.6)}
+#chartPrev{width:100%;height:auto;border:1px solid var(--line);background:#000;display:block}
+#toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:8px 14px;border-radius:4px;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s}
+#toast.on{opacity:1}
+@media (prefers-reduced-motion:reduce){#toast{transition:none}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Shoot Data <span>Calculator</span></h1>
+      <div class="sub">Estimate camera-original storage, dailies and headroom for a shoot. Pick each camera's recording mode, then export a framing chart for the delivery extraction.</div>
+    </div>
+    <label style="min-width:220px">Project name<input type="text" id="project" placeholder="Untitled project"></label>
+  </header>
+
+  <div class="grid">
+    <div class="col">
+      <section class="panel">
+        <h2>Shoot</h2>
+        <div class="fields">
+          <label>Shoot days<input type="number" id="days" min="1" step="1"></label>
+          <label>Delivery / extraction aspect ratio
+            <select id="ar"></select></label>
+          <label id="arCustomWrap" hidden>Custom ratio (width : 1)<input type="number" id="arCustom" min="0.3" max="4" step="0.01"></label>
+          <label>Copies to hold (original + backups)
+            <div class="seg" id="copies" role="group" aria-label="Copies"></div></label>
+        </div>
+        <div class="fields">
+          <label>Dailies codec
+            <div class="seg" id="dCodec" role="group" aria-label="Dailies codec"></div></label>
+          <label>Dailies resolution
+            <div class="seg" id="dRes" role="group" aria-label="Dailies resolution"></div></label>
+          <label>Buffer
+            <div class="seg" id="buffer" role="group" aria-label="Buffer"></div></label>
+        </div>
+      </section>
+
+      <div class="row" style="justify-content:space-between">
+        <h2>Cameras</h2>
+        <button class="btn primary" id="addCam" type="button">+ Add camera</button>
+      </div>
+      <div class="col" id="cams"></div>
+      <details class="panel" id="customBox">
+        <summary><strong>Add a camera that is not in the list</strong></summary>
+        <div class="fields">
+          <label>Brand<input type="text" id="nBrand" placeholder="Blackmagic"></label>
+          <label>Camera model<input type="text" id="nModel" placeholder="URSA Cine 12K"></label>
+          <label>Sensor format<input type="text" id="nSensor" placeholder="Full Frame"></label>
+          <label>Mode name<input type="text" id="nMode" placeholder="12K 3:2 Open Gate"></label>
+          <label>Width (px)<input type="number" id="nW" min="2" step="2"></label>
+          <label>Height (px)<input type="number" id="nH" min="2" step="2"></label>
+          <label>Codec / quality<input type="text" id="nCodec" placeholder="BRAW 5:1"></label>
+          <label>Mb/s at 24 fps<input type="number" id="nRate" min="1" step="1"></label>
+          <label>Max fps (optional)<input type="number" id="nFps" min="1" step="1"></label>
+        </div>
+        <div class="row">
+          <button class="btn primary" id="nAdd" type="button">Save camera mode</button>
+          <button class="btn" id="nCopy" type="button">Copy my cameras as cameras.js lines</button>
+          <button class="btn ghost" id="nClear" type="button">Remove my cameras</button>
+          <span class="note" id="nCount"></span>
+        </div>
+        <p class="note">Saved cameras stay in this browser only. To make them permanent for everyone, paste the copied lines into <code>cameras.js</code> in the repository.</p>
+      </details>
+      <p class="note">Rates are video only. Most codecs scale with frame rate from a 24 fps base. DJI drone rows use DJI's published maximum bit rate and do not scale. H = manufacturer-published, M = derived or recalled, L = estimate. GB and TB are decimal (1 TB = 1,000 GB), as media is labelled.</p>
+    </div>
+
+    <aside class="col totals">
+      <section class="panel">
+        <h2>Total storage required</h2>
+        <div class="big" id="grand">0<small>TB</small></div>
+        <div class="note" id="grandSub"></div>
+        <div class="bar" id="bar" aria-hidden="true"></div>
+        <div class="legend" id="legend"></div>
+      </section>
+      <section class="panel">
+        <h2>Per camera</h2>
+        <div class="scroll"><table id="tbl"></table></div>
+        <div class="row">
+          <button class="btn" id="copySum" type="button">Copy summary</button>
+          <button class="btn" id="csv" type="button">Download CSV</button>
+          <button class="btn ghost" id="reset" type="button">Reset</button>
+        </div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<dialog id="dlg">
+  <div class="col">
+    <div class="row" style="justify-content:space-between"><h2 id="dlgTitle">Framing chart</h2><button class="btn ghost" id="dlgClose" type="button">Close</button></div>
+    <img id="chartPrev" alt="Framing chart preview">
+    <div class="note" id="dlgNote"></div>
+    <div class="row">
+      <button class="btn" id="dlPng" type="button">Download PNG (full resolution)</button>
+      <button class="btn" id="dlSvg" type="button">Download SVG</button>
+    </div>
+    <h2>Printable chart to shoot (PDF)</h2>
+    <div class="fields">
+      <label>Director (blank leaves a line to fill in)<input type="text" id="director"></label>
+      <label>DOP<input type="text" id="dop"></label>
+      <label>Paper<select id="paper"><option value="a4">A4 landscape</option><option value="a3">A3 landscape</option><option value="letter">US Letter landscape</option></select></label>
+    </div>
+    <div class="row"><button class="btn primary" id="dlPdf" type="button">Download PDF framing chart</button>
+      <span class="note">White background, black frame lines, extraction zone, UHD check and a title block.</span></div>
+  </div>
+</dialog>
+<div id="toast" role="status"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="cameras.js"></script>
+<script>
+function buildData(rows){const D={};rows.forEach(r=>{if(!r||!r.brand||!r.model||!(r.w>0)||!(r.h>0)||!(r.mbps24>0))return;
+  const B=D[r.brand]=D[r.brand]||{}, M=B[r.model]=B[r.model]||{f:r.sensor||"",m:[]};
+  let e=M.m.find(x=>x[0]===r.mode&&x[1]===r.w&&x[2]===r.h); if(!e){e=[r.mode||(r.w+" x "+r.h),r.w,r.h,[]];M.m.push(e);}
+  e[3].push([r.codec||"Custom codec",r.mbps24,r.conf||"M",r.fixed?1:0,r.maxFps||""]);});return D;}
+let CUSTOM=[];try{CUSTOM=JSON.parse(localStorage.getItem("sdcCustom"))||[];}catch(e){}
+let DATA=buildData((window.CAMERA_ROWS||[]).concat(CUSTOM));
+const PRORES={"422":147e6/29.97/2073600,"422hq":220e6/29.97/2073600};
+const ARS=[["2.39:1 Scope",2.39],["2.20:1",2.2],["2.00:1",2],["1.85:1 Flat",1.85],["1.78:1 (16:9)",16/9],["1.66:1",1.66],["1.33:1 (4:3)",4/3],["1:1",1],["9:16 Vertical",9/16],["Custom",0]];
+const SQ=[1,1.25,1.3,1.5,1.6,1.8,2];
+const $=id=>document.getElementById(id);
+const fmt=(n,d=1)=>n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const even=n=>Math.max(2,2*Math.round(n/2));
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+function newCam(brand,model,mode,codecMatch,qty,hours){
+  const b=brand||Object.keys(DATA)[0], m=model||Object.keys(DATA[b])[0];
+  const modes=DATA[b][m].m; let mi=Math.max(0,modes.findIndex(x=>x[0]===mode));
+  let ci=Math.max(0,modes[mi][3].findIndex(c=>codecMatch&&c[0].includes(codecMatch)));
+  return {brand:b,model:m,mi,ci,qty:qty||1,fps:24,hours:hours||2,sq:1};
+}
+function defaults(){return {project:"",director:"",dop:"",days:40,arIdx:0,arCustom:2.39,copies:2,dCodec:"422",dRes:"hd",buffer:10,
+  cams:[newCam("ARRI","ALEXA 35","4.6K 3:2 Open Gate","ARRIRAW (uncompressed)",2,2.5),newCam("Sony","FX3 / FX3A","4K UHD","XAVC S-I",1,1)]};}
+let S=defaults();
+try{const j=JSON.parse(localStorage.getItem("sdc1"));if(j&&j.cams&&j.cams.every(c=>DATA[c.brand]&&DATA[c.brand][c.model]&&DATA[c.brand][c.model].m[c.mi]&&DATA[c.brand][c.model].m[c.mi][3][c.ci]))S=Object.assign(defaults(),j);}catch(e){}
+const save=()=>{try{localStorage.setItem("sdc1",JSON.stringify(S));}catch(e){}};
+
+const targetAR=()=>ARS[S.arIdx][1]||Math.max(0.3,+S.arCustom||2.39);
+function calcCam(c){
+  const M=DATA[c.brand][c.model], mode=M.m[c.mi], cod=mode[3][c.ci];
+  const [name,w,h]=mode, [codec,mbps24,conf,fixed,maxfps]=cod;
+  const mbps=fixed?mbps24:mbps24*c.fps/24;
+  const gbDay=mbps/8*3600*c.hours*c.qty/1000;
+  const dl=S.dCodec==="none"?0:PRORES[S.dCodec]*(S.dRes==="uhd"?3840*2160:1920*1080)*c.fps/1e6;
+  const dlDay=dl/8*3600*c.hours*c.qty/1000;
+  const ar=targetAR(), eff=w*c.sq/h;
+  let ew,eh; if(ar>=eff){ew=w;eh=Math.min(h,even(w*c.sq/ar));}else{eh=h;ew=Math.min(w,even(h*ar/c.sq));}
+  const mf=parseFloat(maxfps);
+  return {M,name,w,h,codec,mbps,conf,fixed,maxfps,gbDay,dlDay,dl,ew,eh,ar,eff,area:ew*eh/(w*h),over:mf&&c.fps>mf};
+}
+function totals(){
+  const per=S.cams.map(calcCam);
+  const ocn=per.reduce((a,p)=>a+p.gbDay,0)*S.days, dl=per.reduce((a,p)=>a+p.dlDay,0)*S.days;
+  const buf=(ocn+dl)*S.buffer/100, one=ocn+dl+buf;
+  return {per,ocn,dl,buf,one,grand:one*S.copies};
+}
+
+function seg(id,opts,key){
+  const el=$(id); el.innerHTML="";
+  opts.forEach(([label,val])=>{const b=document.createElement("button");b.type="button";b.textContent=label;b.setAttribute("aria-pressed",String(S[key]===val));
+    b.onclick=()=>{S[key]=val;seg(id,opts,key);update();};el.appendChild(b);});
+}
+function opt(sel,items,cur){sel.innerHTML=items.map(([v,t])=>`<option value="${esc(v)}"${String(v)===String(cur)?" selected":""}>${esc(t)}</option>`).join("");}
+
+function renderCams(){
+  const host=$("cams"); host.innerHTML="";
+  S.cams.forEach((c,i)=>{
+    const M=DATA[c.brand][c.model];
+    const el=document.createElement("section"); el.className="panel cam";
+    el.innerHTML=`<div class="camhead"><strong>Camera ${String.fromCharCode(65+i%26)}</strong><div class="row"><span class="tag" data-k="fmt"></span><span class="tag" data-k="conf"></span>
+      <button class="btn" data-a="chart" type="button">Framing chart</button><button class="btn ghost" data-a="del" type="button" aria-label="Remove camera">Remove</button></div></div>
+      <div class="fields">
+        <label>Brand<select id="b${i}"></select></label>
+        <label>Camera<select id="m${i}"></select></label>
+        <label>Sensor mode and resolution<select id="s${i}"></select></label>
+        <label>Codec<select id="c${i}"></select></label>
+      </div>
+      <div class="fields">
+        <label>Number of cameras<input type="number" id="q${i}" min="1" step="1" value="${c.qty}"></label>
+        <label>Frame rate (fps)<input type="number" id="f${i}" min="1" step="0.001" value="${c.fps}"></label>
+        <label>Hours rolled per camera per day<input type="number" id="h${i}" min="0" step="0.25" value="${c.hours}"></label>
+        <label>Lens squeeze<select id="x${i}"></select></label>
+      </div>
+      <div class="warnline" data-k="warn" hidden></div>
+      <div class="readout">
+        <div><small>Recorded</small><b data-k="rec"></b></div>
+        <div><small>Extraction</small><b data-k="ext"></b></div>
+        <div><small>Bit rate</small><b data-k="rate"></b></div>
+        <div><small>Camera original / day</small><b data-k="day"></b></div>
+        <div><small>Dailies / day</small><b data-k="dl"></b></div>
+        <div><small>Shoot total</small><b data-k="tot"></b></div>
+      </div>
+      <div class="chartrow"><img class="thumb" data-k="thumb" alt="Live framing chart preview" tabindex="0" role="button">
+        <div class="col"><div><strong data-k="thumbT"></strong></div><div class="note">The chart redraws whenever you change the camera, sensor mode, lens squeeze or aspect ratio.</div>
+        <div class="row"><button class="btn primary" data-a="chart2" type="button">Export framing chart (PDF, PNG, SVG)</button></div></div></div>`;
+    host.appendChild(el);
+    opt($("b"+i),Object.keys(DATA).map(b=>[b,b]),c.brand);
+    opt($("m"+i),Object.keys(DATA[c.brand]).map(m=>[m,m]),c.model);
+    opt($("s"+i),M.m.map((m,k)=>[k,`${m[0]}  ·  ${m[1]} x ${m[2]}`]),c.mi);
+    opt($("c"+i),M.m[c.mi][3].map((k,n)=>[n,`${k[0]}  ·  ${fmt(k[1],0)} Mb/s`]),c.ci);
+    opt($("x"+i),SQ.map(s=>[s,s===1?"1x spherical":s+"x anamorphic"]),c.sq);
+    $("b"+i).onchange=e=>{c.brand=e.target.value;c.model=Object.keys(DATA[c.brand])[0];c.mi=0;c.ci=0;renderCams();update();};
+    $("m"+i).onchange=e=>{c.model=e.target.value;c.mi=0;c.ci=0;renderCams();update();};
+    $("s"+i).onchange=e=>{c.mi=+e.target.value;c.ci=0;renderCams();update();};
+    $("c"+i).onchange=e=>{c.ci=+e.target.value;update();};
+    $("x"+i).onchange=e=>{c.sq=+e.target.value;update();};
+    [["q","qty",1],["f","fps",1],["h","hours",0]].forEach(([p,k,min])=>{$(p+i).oninput=e=>{const v=parseFloat(e.target.value);c[k]=isFinite(v)&&v>=min?v:(min||0);update();};});
+    el.querySelector("[data-a=del]").onclick=()=>{S.cams.splice(i,1);if(!S.cams.length)S.cams.push(newCam());renderCams();update();};
+    el.querySelector("[data-a=chart]").onclick=()=>openChart(i);
+    el.querySelector("[data-a=chart2]").onclick=()=>openChart(i);
+    const th=el.querySelector("[data-k=thumb]"); th.onclick=()=>openChart(i); th.onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();openChart(i);}};
+  });
+}
+
+function update(){
+  const T=totals();
+  document.querySelectorAll("#cams .cam").forEach((el,i)=>{
+    const p=T.per[i], c=S.cams[i], q=k=>el.querySelector(`[data-k=${k}]`);
+    q("fmt").textContent=p.M.f;
+    q("conf").textContent={H:"H · published",M:"M · derived",L:"L · estimate",U:"Your entry"}[p.conf]; q("conf").className="tag "+p.conf;
+    q("rec").textContent=`${p.w} x ${p.h}`;
+    q("ext").textContent=`${p.ew} x ${p.eh} (${fmt(p.area*100,0)}% of frame)`;
+    q("rate").textContent=`${fmt(p.mbps,0)} Mb/s`+(p.fixed?" max":"");
+    q("day").textContent=`${fmt(p.gbDay,0)} GB`;
+    q("dl").textContent=S.dCodec==="none"?"off":`${fmt(p.dlDay,0)} GB`;
+    q("tot").textContent=`${fmt((p.gbDay+p.dlDay)*S.days/1000,2)} TB`;
+    q("thumb").src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(chartSVG(i));
+    q("thumbT").textContent=`${fmt(p.ar,2)}:1 extraction ${p.ew} x ${p.eh} inside ${p.w} x ${p.h}`;
+    const w=q("warn"), msgs=[];
+    if(p.over)msgs.push(`${c.fps} fps is above this mode's listed maximum (${p.maxfps} fps).`);
+    if(p.fixed)msgs.push("Drone rate is DJI's published maximum, used as a ceiling at any frame rate.");
+    if(p.conf==="L")msgs.push("This rate is an estimate. Record a test card before budgeting.");
+    w.hidden=!msgs.length; w.textContent=msgs.join(" ");
+  });
+  $("grand").innerHTML=`${fmt(T.grand/1000,T.grand<1e5?1:0)}<small>TB</small>`;
+  $("grandSub").textContent=`${fmt(T.one/1000,1)} TB per copy x ${S.copies} ${S.copies>1?"copies":"copy"}  ·  ${fmt(T.one/S.days,0)} GB per shoot day  ·  ${fmt(T.grand/1000/1.099511627776,1)} TiB`;
+  const parts=[["Camera original",T.ocn,"var(--rec)"],[`Dailies${S.dCodec==="none"?"":" (ProRes "+(S.dCodec==="422hq"?"422 HQ":"422")+" "+S.dRes.toUpperCase()+")"}`,T.dl,"var(--dailies)"],[`Buffer ${S.buffer}%`,T.buf,"var(--buffer)"]];
+  $("bar").innerHTML=parts.map(p=>`<i style="width:${T.one?p[1]/T.one*100:0}%;background:${p[2]}"></i>`).join("");
+  $("legend").innerHTML=parts.map(p=>`<div><span><em style="background:${p[2]}"></em>${esc(p[0])}</span><b>${fmt(p[1]/1000,2)} TB</b></div>`).join("")+
+    `<div class="sum"><span>One full copy</span><b>${fmt(T.one/1000,2)} TB</b></div>`;
+  $("tbl").innerHTML=`<tr><th>Camera</th><th>Qty</th><th>GB/day</th><th>TB total</th></tr>`+T.per.map((p,i)=>`<tr><td>${String.fromCharCode(65+i%26)} · ${esc(S.cams[i].model)}<br><span class="note">${esc(p.codec)}</span></td><td>${S.cams[i].qty}</td><td>${fmt(p.gbDay+p.dlDay,0)}</td><td>${fmt((p.gbDay+p.dlDay)*S.days/1000,2)}</td></tr>`).join("");
+  $("arCustomWrap").hidden=ARS[S.arIdx][1]!==0;
+  save();
+}
+
+function summaryRows(){
+  const T=totals(), r=[["Project",S.project||"Untitled"],["Shoot days",S.days],["Delivery aspect ratio",fmt(targetAR(),2)+":1"],[]];
+  r.push(["Camera","Model","Qty","Mode","Recorded","Extraction","Codec","fps","Hours/day","Mb/s","GB/day (original)","GB/day (dailies)","TB shoot total","Confidence"]);
+  T.per.forEach((p,i)=>{const c=S.cams[i];r.push([String.fromCharCode(65+i%26),c.brand+" "+c.model,c.qty,p.name,p.w+"x"+p.h,p.ew+"x"+p.eh,p.codec,c.fps,c.hours,Math.round(p.mbps),Math.round(p.gbDay),Math.round(p.dlDay),((p.gbDay+p.dlDay)*S.days/1000).toFixed(2),p.conf]);});
+  r.push([],["Camera original TB",(T.ocn/1000).toFixed(2)],["Dailies TB",(T.dl/1000).toFixed(2)],["Buffer "+S.buffer+"% TB",(T.buf/1000).toFixed(2)],["One copy TB",(T.one/1000).toFixed(2)],["Copies",S.copies],["Total TB",(T.grand/1000).toFixed(2)]);
+  return r;
+}
+function toast(t){const e=$("toast");e.textContent=t;e.classList.add("on");setTimeout(()=>e.classList.remove("on"),2200);}
+function download(name,blob){try{const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),4000);}catch(e){toast("Download blocked in this viewer. It works once hosted.");}}
+
+function chartSVG(i){
+  const c=S.cams[i], p=calcCam(c), W=p.w, H=p.h, u=Math.min(W,H)/100, x=(W-p.ew)/2, y=(H-p.eh)/2, cx=W/2, cy=H/2, sw=Math.max(2,u*0.25);
+  const t=(tx,ty,s,str,anchor="start",fill="#fff",wt=400)=>`<text x="${tx}" y="${ty}" font-family="Helvetica,Arial,sans-serif" font-size="${s}" font-weight="${wt}" fill="${fill}" text-anchor="${anchor}">${esc(str)}</text>`;
+  const L=u*6, corners=[[x,y,1,1],[x+p.ew,y,-1,1],[x,y+p.eh,1,-1],[x+p.ew,y+p.eh,-1,-1]].map(([a,b,dx,dy])=>`<path d="M${a+dx*L} ${b}H${a}V${b+dy*L}" fill="none" stroke="#ffd23f" stroke-width="${sw*2.5}"/>`).join("");
+  const tri=(ax,ay,rot)=>`<path d="M0 0L${-u*1.6} ${-u*3}H${u*1.6}Z" fill="#ffd23f" transform="translate(${ax} ${ay}) rotate(${rot})"/>`;
+  const arLabel=fmt(p.ar,2)+":1";
+  let grid=""; for(let k=1;k<10;k++){grid+=`<path d="M${W*k/10} 0V${H}M0 ${H*k/10}H${W}" stroke="#3a3f46" stroke-width="${sw*0.5}"/>`;}
+  const shade=(p.ew<W||p.eh<H)?`<path fill-rule="evenodd" d="M0 0H${W}V${H}H0ZM${x} ${y}V${y+p.eh}H${x+p.ew}V${y}Z" fill="#000" fill-opacity=".45"/>`:"";
+  const inX=x+u*3, fs=u*2.6;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}">
+<rect width="${W}" height="${H}" fill="#24282e"/>${grid}${shade}
+<rect x="${sw}" y="${sw}" width="${W-2*sw}" height="${H-2*sw}" fill="none" stroke="#ffffff" stroke-width="${sw*2}"/>
+<rect x="${x}" y="${y}" width="${p.ew}" height="${p.eh}" fill="none" stroke="#ffd23f" stroke-width="${sw}"/>${corners}
+<path d="M${cx-u*8} ${cy}H${cx+u*8}M${cx} ${cy-u*8}V${cy+u*8}" stroke="#fff" stroke-width="${sw}"/><circle cx="${cx}" cy="${cy}" r="${u*3}" fill="none" stroke="#fff" stroke-width="${sw}"/>
+${tri(cx,y,180)}${tri(cx,y+p.eh,0)}${tri(x,cy,90)}${tri(x+p.ew,cy,-90)}
+${t(inX,y+u*6,fs*1.5,S.project||"Untitled project","start","#fff",700)}
+${t(inX,y+u*10.5,fs,`${c.brand} ${c.model}  |  ${p.name}`)}
+${t(inX,y+u*14.5,fs,`Recorded ${W} x ${H}  |  ${c.sq===1?"Spherical":c.sq+"x anamorphic"}  |  ${p.codec}`)}
+${t(inX,y+p.eh-u*4,fs*1.3,`${arLabel} extraction  ${p.ew} x ${p.eh}`,"start","#ffd23f",700)}
+${t(x+p.ew-u*3,y+p.eh-u*4,fs,`Camera ${String.fromCharCode(65+i%26)}  |  ${new Date().toISOString().slice(0,10)}`,"end")}
+${t(cx,y+p.eh/2+u*14,fs*1.2,arLabel,"middle","#ffd23f",700)}
+${(p.eh<H)?t(cx,Math.max(fs*1.2,y-u*4),fs,`Full recorded frame ${W} x ${H} (${fmt(p.eff,2)}:1${c.sq===1?"":" desqueezed"})`,"middle","#cfd4da"):""}
+</svg>`;
+}
+let chartIdx=0;
+function openChart(i){chartIdx=i;const p=calcCam(S.cams[i]);$("dlgTitle").textContent=`Framing chart · Camera ${String.fromCharCode(65+i%26)} · ${S.cams[i].model}`;
+  $("chartPrev").src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(chartSVG(i));
+  $("dlgNote").textContent=`Chart is drawn in recorded pixel space: ${p.w} x ${p.h}, with a centred ${fmt(p.ar,2)}:1 extraction of ${p.ew} x ${p.eh}. Load it in the monitor or post tool at 1:1 to check frame lines.`;
+  $("dlg").showModal();}
+function chartName(ext){const c=S.cams[chartIdx],p=calcCam(c);return `framing_${(c.model+"_"+p.w+"x"+p.h+"_"+fmt(p.ar,2)).replace(/[^a-z0-9.]+/gi,"-")}.${ext}`;}
+$("dlSvg").onclick=()=>download(chartName("svg"),new Blob([chartSVG(chartIdx)],{type:"image/svg+xml"}));
+$("dlPng").onclick=()=>{const p=calcCam(S.cams[chartIdx]),img=new Image(),url=URL.createObjectURL(new Blob([chartSVG(chartIdx)],{type:"image/svg+xml"}));
+  img.onload=()=>{const tryAt=s=>{const cv=document.createElement("canvas");cv.width=Math.round(p.w*s);cv.height=Math.round(p.h*s);const g=cv.getContext("2d");
+      try{g.drawImage(img,0,0,cv.width,cv.height);cv.toBlob(b=>{if(b){download(chartName("png"),b);if(s<1)toast("Browser canvas limit reached. Exported at "+Math.round(s*100)+"% scale; use the SVG for full size.");}else if(s>0.3)tryAt(s/2);else toast("PNG export failed. Use the SVG.");},"image/png");}
+      catch(e){if(s>0.3)tryAt(s/2);else toast("PNG export failed. Use the SVG.");}};
+    tryAt(1);URL.revokeObjectURL(url);};
+  img.onerror=()=>toast("PNG export failed. Use the SVG.");img.src=url;};
+$("dlgClose").onclick=()=>$("dlg").close();
+
+function init(){
+  $("project").value=S.project; $("director").value=S.director||""; $("dop").value=S.dop||""; $("project").oninput=e=>{S.project=e.target.value;save();};
+  $("days").value=S.days; $("days").oninput=e=>{const v=parseInt(e.target.value);S.days=v>0?v:1;update();};
+  opt($("ar"),ARS.map((a,i)=>[i,a[0]]),S.arIdx); $("ar").onchange=e=>{S.arIdx=+e.target.value;update();};
+  $("arCustom").value=S.arCustom; $("arCustom").oninput=e=>{S.arCustom=parseFloat(e.target.value)||2.39;update();};
+  seg("copies",[["1",1],["2",2],["3",3]],"copies");
+  seg("dCodec",[["None","none"],["ProRes 422","422"],["ProRes 422 HQ","422hq"]],"dCodec");
+  seg("dRes",[["HD 1920x1080","hd"],["UHD 3840x2160","uhd"]],"dRes");
+  seg("buffer",[["0%",0],["5%",5],["10%",10],["20%",20]],"buffer");
+  renderCams(); update();
+}
+$("addCam").onclick=()=>{const l=S.cams[S.cams.length-1];S.cams.push(Object.assign({},l));renderCams();update();};
+$("reset").onclick=()=>{S=defaults();init();};
+$("copySum").onclick=()=>{const txt=summaryRows().map(r=>r.join("\t")).join("\n");(navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).then(()=>toast("Summary copied")).catch(()=>toast("Copy blocked by the browser"));};
+$("csv").onclick=()=>download("shoot-data-estimate.csv",new Blob([summaryRows().map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n")],{type:"text/csv"}));
+function saveCustom(){try{localStorage.setItem("sdcCustom",JSON.stringify(CUSTOM));}catch(e){} DATA=buildData((window.CAMERA_ROWS||[]).concat(CUSTOM)); $("nCount").textContent=CUSTOM.length?CUSTOM.length+" saved in this browser":"";}
+$("nAdd").onclick=()=>{const v=id=>$(id).value.trim(), r={brand:v("nBrand"),model:v("nModel"),sensor:v("nSensor"),mode:v("nMode"),w:parseInt(v("nW")),h:parseInt(v("nH")),codec:v("nCodec"),mbps24:parseFloat(v("nRate")),conf:"U",fixed:0,maxFps:parseFloat(v("nFps"))||""};
+  if(!r.brand||!r.model||!(r.w>0)||!(r.h>0)||!(r.mbps24>0)){toast("Fill in brand, model, width, height and Mb/s.");return;}
+  CUSTOM.push(r);saveCustom();S.cams.push(newCam(r.brand,r.model,r.mode||(r.w+" x "+r.h),r.codec));renderCams();update();toast("Saved and added as a new camera row");};
+$("nCopy").onclick=()=>{if(!CUSTOM.length){toast("No saved cameras yet");return;}const txt=CUSTOM.map(r=>"  "+JSON.stringify(Object.assign({},r,{conf:"M"}))+",").join("\n");(navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).then(()=>toast("Copied. Paste into cameras.js")).catch(()=>toast("Copy blocked by the browser"));};
+$("nClear").onclick=()=>{CUSTOM=[];saveCustom();S.cams=S.cams.filter(c=>DATA[c.brand]&&DATA[c.brand][c.model]&&DATA[c.brand][c.model].m[c.mi]&&DATA[c.brand][c.model].m[c.mi][3][c.ci]);if(!S.cams.length)S=defaults();renderCams();update();};
+$("nCount").textContent=CUSTOM.length?CUSTOM.length+" saved in this browser":"";
+function pdfChart(i){
+  if(!(window.jspdf&&window.jspdf.jsPDF)){toast("PDF library did not load. Check the connection and reload.");return;}
+  const c=S.cams[i], p=calcCam(c), doc=new window.jspdf.jsPDF({orientation:"landscape",unit:"mm",format:$("paper").value});
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), m=10, k=PW/297;
+  const T=(s,x,y,size,bold,align,col)=>{doc.setFont("helvetica",bold?"bold":"normal");doc.setFontSize(size*k);doc.setTextColor(col||0);doc.text(String(s),x,y,{align:align||"left"});};
+  // title block
+  doc.setDrawColor(0);doc.setLineWidth(0.5);doc.rect(m,m,PW-2*m,24*k);
+  const cols=[["PROJECT",S.project],["DIRECTOR",S.director],["DOP",S.dop],["DATE",""]], cw=(PW-2*m)/4;
+  cols.forEach(([lab,val],n)=>{const x=m+cw*n; if(n)doc.line(x,m,x,m+12*k); T(lab,x+2*k,m+4*k,7,true,"left",90); if(val)T(val,x+2*k,m+9.5*k,11,true); else{doc.setLineWidth(0.2);doc.line(x+2*k,m+10*k,x+cw-3*k,m+10*k);doc.setLineWidth(0.5);}});
+  doc.line(m,m+12*k,PW-m,m+12*k);
+  const sqTxt=c.sq===1?"Spherical":c.sq+"x anamorphic";
+  T("CAMERA "+String.fromCharCode(65+i%26),m+2*k,m+16*k,7,true,"left",90);
+  T(`${c.brand} ${c.model}   |   ${p.name}   |   ${p.codec}   |   ${sqTxt}   |   ${c.fps} fps`,m+2*k,m+21*k,10,true);
+  T("FRAMING CHART",PW-m-2*k,m+21*k,10,true,"right");
+  // chart area: desqueezed frame aspect, as the lens sees a printed chart
+  const top=m+30*k, bot=PH-m-22*k, availW=PW-2*m, availH=bot-top;
+  let fw=availW, fh=fw/p.eff; if(fh>availH){fh=availH;fw=fh*p.eff;}
+  const fx=(PW-fw)/2, fy=top+(availH-fh)/2, cx=PW/2, cy=fy+fh/2;
+  const ex_w=fw*p.ew/p.w, ex_h=fh*p.eh/p.h, ex=cx-ex_w/2, ey=cy-ex_h/2;
+  doc.setFillColor(225);doc.rect(fx,fy,fw,fh,"F");doc.setFillColor(255);doc.rect(ex,ey,ex_w,ex_h,"F");
+  doc.setDrawColor(190);doc.setLineWidth(0.1);for(let n=1;n<10;n++){doc.line(fx+fw*n/10,fy,fx+fw*n/10,fy+fh);doc.line(fx,fy+fh*n/10,fx+fw,fy+fh*n/10);}
+  doc.setDrawColor(0);doc.setLineWidth(1.2);doc.rect(fx,fy,fw,fh);
+  doc.setLineWidth(0.6);doc.rect(ex,ey,ex_w,ex_h);
+  // UHD reference zone (spherical only): 3840 px wide at the delivery ratio
+  let uhdTxt="";
+  if(c.sq===1&&p.ew>3840){const uw=fw*3840/p.w, uh=uw/p.ar, uhH=even(3840/p.ar);doc.setLineDashPattern([2*k,1.5*k],0);doc.setLineWidth(0.35);doc.rect(cx-uw/2,cy-uh/2,uw,uh);doc.setLineDashPattern([],0);
+    uhdTxt=`UHD reference 3840 x ${uhH}`;T(uhdTxt,cx-uw/2+2*k,cy+uh/2-2*k,7,false);}
+  // corner marks, arrows, centre
+  const L=8*k;doc.setLineWidth(1.4);[[ex,ey,1,1],[ex+ex_w,ey,-1,1],[ex,ey+ex_h,1,-1],[ex+ex_w,ey+ex_h,-1,-1]].forEach(([a,b,dx,dy])=>{doc.line(a,b,a+dx*L,b);doc.line(a,b,a,b+dy*L);});
+  doc.setFillColor(0);const a=3*k;
+  doc.triangle(cx,ey,cx-a/2,ey+a,cx+a/2,ey+a,"F");doc.triangle(cx,ey+ex_h,cx-a/2,ey+ex_h-a,cx+a/2,ey+ex_h-a,"F");
+  doc.triangle(ex,cy,ex+a,cy-a/2,ex+a,cy+a/2,"F");doc.triangle(ex+ex_w,cy,ex+ex_w-a,cy-a/2,ex+ex_w-a,cy+a/2,"F");
+  const R=9*k;for(let n=0;n<16;n+=2){const a0=n*Math.PI/8,a1=(n+1)*Math.PI/8;doc.triangle(cx,cy,cx+R*Math.cos(a0),cy+R*Math.sin(a0),cx+R*Math.cos(a1),cy+R*Math.sin(a1),"F");}
+  doc.setLineWidth(0.3);doc.circle(cx,cy,R);doc.line(cx-R*2,cy,cx+R*2,cy);doc.line(cx,cy-R*2,cx,cy+R*2);
+  // labels
+  const arL=fmt(p.ar,2)+":1";
+  T(`${arL} EXTRACTION   ${p.ew} x ${p.eh}`,ex+3*k,ey+6*k,11,true);
+  T(arL,ex+ex_w-3*k,ey+ex_h-3*k,11,true,"right");
+  if(p.eh<p.h)T(`FULL SENSOR MODE   ${p.w} x ${p.h}   (${fmt(p.eff,2)}:1${c.sq===1?"":" desqueezed"})`,fx+3*k,fy+5*k,8,true);
+  else if(p.ew<p.w){doc.setFont("helvetica","bold");doc.setFontSize(8*k);doc.text(`FULL SENSOR MODE  ${p.w} x ${p.h}`,fx+4*k,fy+fh-3*k,{angle:90});}
+  // footer
+  const pass=p.ew>=3840, fyT=PH-m-15*k;
+  doc.setLineWidth(0.5);doc.rect(m,fyT-4*k,PW-2*m,19*k);
+  T(pass?"UHD CHECK: PASS":"UHD CHECK: BELOW 4K UHD",m+2*k,fyT+1*k,10,true);
+  T(pass?`Extraction is ${p.ew} photosites wide, at or above the 3840 needed for a 4K UHD deliverable without upscaling.`:`Extraction is ${p.ew} photosites wide, under the 3840 needed for a 4K UHD deliverable. Delivery in UHD would need upscaling.`,m+2*k,fyT+6*k,8,false);
+  T(`Recorded ${p.w} x ${p.h}   |   Extraction ${p.ew} x ${p.eh} (${fmt(p.area*100,0)}% of frame), centred   |   ${uhdTxt||"Dashed UHD box not drawn for this mode"}`,m+2*k,fyT+10.5*k,8,false);
+  T("Shoot square-on and level. Fill the frame so the thick outer line sits on the edge of the full sensor image.   Lens: ____________   Focal length: ________   Checked by: ____________",m+2*k,fyT+13.5*k,7,false,"left",70);
+  try{download(chartName("pdf"),doc.output("blob"));}catch(e){toast("PDF export failed.");}
+}
+$("dlPdf").onclick=()=>pdfChart(chartIdx);
+$("director").oninput=e=>{S.director=e.target.value;save();};$("dop").oninput=e=>{S.dop=e.target.value;save();};
+init();
+</script>
+</body>
+</html>
