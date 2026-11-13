@@ -17,11 +17,15 @@ Open `cameras.js`, copy any line, edit it and commit. One line is one camera + s
 - `mbps24`: video bit rate in Mb/s at 24 fps.
 - `conf`: H published, M derived, L estimate.
 - `fixed`: 1 when the rate is a published maximum that does not scale with fps.
+- `gop`: 1 for Long GOP codecs.
 
 You can also add a camera in the app ("Add a camera that is not in the list"). That saves it in your browser only; use "Copy my cameras as cameras.js lines" and paste the result into `cameras.js` to make it permanent.
 
 ## Maths
-- Rate at fps = Mb/s at 24 fps x fps / 24 (DJI drone rows are published maximums and do not scale).
+- RAW and intra codecs: rate at fps = Mb/s at 24 fps x fps / 24.
+- Long GOP codecs (`gop: 1`): published rate held flat up to 30 fps, then x fps / 30.
+- DJI drone rows (`fixed: 1`): published maximum, no scaling.
+- ARRIRAW with "Offload with Codex HDE": stored size = 60% of ARRIRAW (ARRI's typical figure; content dependent). Camera cards still fill at the full rate.
 - GB per day = Mb/s / 8 x 3600 x hours rolled x number of cameras / 1000.
 - Dailies = Apple ProRes target rate (422: 147 Mb/s, 422 HQ: 220 Mb/s at 1080p29.97) scaled by pixels and fps.
 - Total = (camera original + dailies) x shoot days x (1 + buffer) x copies.

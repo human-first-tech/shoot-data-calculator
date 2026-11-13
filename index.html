@@ -65,6 +65,8 @@ select:focus-visible,input:focus-visible,button:focus-visible{outline:2px solid 
 .chartrow{display:flex;gap:14px;flex-wrap:wrap;align-items:center;border-top:1px dashed var(--line);padding-top:10px}
 .chartrow .col{flex:1;min-width:200px;gap:8px}
 .thumb{width:260px;max-width:100%;height:auto;border:1px solid var(--line);border-radius:3px;cursor:pointer;background:#24282e}
+label.check{flex-direction:row;align-items:center;gap:8px;font-size:13px;color:var(--ink)}
+label.check input{width:16px;height:16px;accent-color:var(--rec)}
 .btn{font:inherit;font-size:13px;font-weight:600;border:1px solid var(--ink);background:var(--panel);color:var(--ink);border-radius:4px;padding:7px 12px;cursor:pointer}
 .btn:hover{background:var(--ink);color:var(--paper)}
 .btn.primary{background:var(--rec);border-color:var(--rec);color:#fff}
@@ -157,7 +159,7 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
         </div>
         <p class="note">Saved cameras stay in this browser only. To make them permanent for everyone, paste the copied lines into <code>cameras.js</code> in the repository.</p>
       </details>
-      <p class="note">Rates are video only. Most codecs scale with frame rate from a 24 fps base. DJI drone rows use DJI's published maximum bit rate and do not scale. H = manufacturer-published, M = derived or recalled, L = estimate. GB and TB are decimal (1 TB = 1,000 GB), as media is labelled.</p>
+      <p class="note">Rates are video only. RAW and intra codecs scale with frame rate from a 24 fps base. Long GOP codecs hold their published rate up to 30 fps. DJI drone rows use DJI's published maximum bit rate and do not scale. H = manufacturer-published, M = derived or recalled, L = estimate. GB and TB are decimal (1 TB = 1,000 GB), as media is labelled.</p>
     </div>
 
     <aside class="col totals">
@@ -208,12 +210,13 @@ dialog::backdrop{background:rgba(0,0,0,.6)}
 function buildData(rows){const D={};rows.forEach(r=>{if(!r||!r.brand||!r.model||!(r.w>0)||!(r.h>0)||!(r.mbps24>0))return;
   const B=D[r.brand]=D[r.brand]||{}, M=B[r.model]=B[r.model]||{f:r.sensor||"",m:[]};
   let e=M.m.find(x=>x[0]===r.mode&&x[1]===r.w&&x[2]===r.h); if(!e){e=[r.mode||(r.w+" x "+r.h),r.w,r.h,[]];M.m.push(e);}
-  e[3].push([r.codec||"Custom codec",r.mbps24,r.conf||"M",r.fixed?1:0,r.maxFps||""]);});return D;}
+  e[3].push([r.codec||"Custom codec",r.mbps24,r.conf||"M",r.fixed?1:0,r.maxFps||"",r.gop?1:0]);});return D;}
 let CUSTOM=[];try{CUSTOM=JSON.parse(localStorage.getItem("sdcCustom"))||[];}catch(e){}
 let DATA=buildData((window.CAMERA_ROWS||[]).concat(CUSTOM));
 const PRORES={"422":147e6/29.97/2073600,"422hq":220e6/29.97/2073600};
 const ARS=[["2.39:1 Scope",2.39],["2.20:1",2.2],["2.00:1",2],["1.85:1 Flat",1.85],["1.78:1 (16:9)",16/9],["1.66:1",1.66],["1.33:1 (4:3)",4/3],["1:1",1],["9:16 Vertical",9/16],["Custom",0]];
 const SQ=[1,1.25,1.3,1.5,1.6,1.8,2];
+const HDE=0.6; // ARRI: HDE files are about 60% of ARRIRAW, content dependent
 const $=id=>document.getElementById(id);
 const fmt=(n,d=1)=>n.toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const even=n=>Math.max(2,2*Math.round(n/2));
@@ -223,26 +226,36 @@ function newCam(brand,model,mode,codecMatch,qty,hours){
   const b=brand||Object.keys(DATA)[0], m=model||Object.keys(DATA[b])[0];
   const modes=DATA[b][m].m; let mi=Math.max(0,modes.findIndex(x=>x[0]===mode));
   let ci=Math.max(0,modes[mi][3].findIndex(c=>codecMatch&&c[0].includes(codecMatch)));
-  return {brand:b,model:m,mi,ci,qty:qty||1,fps:24,hours:hours||2,sq:1};
+  return {brand:b,model:m,mi,ci,qty:qty||1,fps:24,hours:hours||2,sq:1,hde:false};
 }
 function defaults(){return {project:"",director:"",dop:"",days:40,arIdx:0,arCustom:2.39,copies:2,dCodec:"422",dRes:"hd",buffer:10,
   cams:[newCam("ARRI","ALEXA 35","4.6K 3:2 Open Gate","ARRIRAW (uncompressed)",2,2.5),newCam("Sony","FX3 / FX3A","4K UHD","XAVC S-I",1,1)]};}
 let S=defaults();
-try{const j=JSON.parse(localStorage.getItem("sdc1"));if(j&&j.cams&&j.cams.every(c=>DATA[c.brand]&&DATA[c.brand][c.model]&&DATA[c.brand][c.model].m[c.mi]&&DATA[c.brand][c.model].m[c.mi][3][c.ci]))S=Object.assign(defaults(),j);}catch(e){}
+const num=(v,min,max,def)=>{v=parseFloat(v);return isFinite(v)&&v>=min&&v<=max?v:def;};
+const validCam=c=>c&&DATA[c.brand]&&DATA[c.brand][c.model]&&DATA[c.brand][c.model].m[c.mi]&&DATA[c.brand][c.model].m[c.mi][3][c.ci];
+function sanitize(j){const d=defaults();if(!j||typeof j!=="object")return d;
+  const cams=(Array.isArray(j.cams)?j.cams:[]).filter(validCam).map(c=>({brand:c.brand,model:c.model,mi:c.mi,ci:c.ci,qty:Math.round(num(c.qty,1,999,1)),fps:num(c.fps,1,100000,24),hours:num(c.hours,0,24,2),sq:SQ.includes(+c.sq)?+c.sq:1,hde:!!c.hde}));
+  return {project:String(j.project||"").slice(0,80),director:String(j.director||"").slice(0,60),dop:String(j.dop||"").slice(0,60),days:Math.round(num(j.days,1,9999,d.days)),
+    arIdx:ARS[j.arIdx]?+j.arIdx:0,arCustom:num(j.arCustom,0.3,4,2.39),copies:[1,2,3].includes(j.copies)?j.copies:d.copies,dCodec:["none","422","422hq"].includes(j.dCodec)?j.dCodec:d.dCodec,
+    dRes:["hd","uhd"].includes(j.dRes)?j.dRes:d.dRes,buffer:[0,5,10,20].includes(j.buffer)?j.buffer:d.buffer,cams:cams.length?cams:d.cams};}
+try{const raw=localStorage.getItem("sdc1");if(raw)S=sanitize(JSON.parse(raw));}catch(e){}
 const save=()=>{try{localStorage.setItem("sdc1",JSON.stringify(S));}catch(e){}};
 
-const targetAR=()=>ARS[S.arIdx][1]||Math.max(0.3,+S.arCustom||2.39);
+const arName=()=>ARS[S.arIdx][1]?ARS[S.arIdx][0].split(" ")[0]:fmt(targetAR(),2)+":1";
+const targetAR=()=>ARS[S.arIdx][1]||num(S.arCustom,0.3,4,2.39);
 function calcCam(c){
   const M=DATA[c.brand][c.model], mode=M.m[c.mi], cod=mode[3][c.ci];
-  const [name,w,h]=mode, [codec,mbps24,conf,fixed,maxfps]=cod;
-  const mbps=fixed?mbps24:mbps24*c.fps/24;
-  const gbDay=mbps/8*3600*c.hours*c.qty/1000;
+  const [name,w,h]=mode, [codec,mbps24,conf0,fixed,maxfps,gop]=cod;
+  // fixed: published maximum, no scaling. gop: flat to 30 fps then scaled. Otherwise linear from the 24 fps base.
+  const mbps=fixed?mbps24:gop?mbps24*Math.max(1,c.fps/30):mbps24*c.fps/24;
+  const canHde=codec.indexOf("ARRIRAW (uncompressed)")===0, hde=canHde&&!!c.hde, conf=hde?"L":conf0;
+  const cardDay=mbps/8*3600*c.hours*c.qty/1000, gbDay=cardDay*(hde?HDE:1);
   const dl=S.dCodec==="none"?0:PRORES[S.dCodec]*(S.dRes==="uhd"?3840*2160:1920*1080)*c.fps/1e6;
   const dlDay=dl/8*3600*c.hours*c.qty/1000;
   const ar=targetAR(), eff=w*c.sq/h;
   let ew,eh; if(ar>=eff){ew=w;eh=Math.min(h,even(w*c.sq/ar));}else{eh=h;ew=Math.min(w,even(h*ar/c.sq));}
   const mf=parseFloat(maxfps);
-  return {M,name,w,h,codec,mbps,conf,fixed,maxfps,gbDay,dlDay,dl,ew,eh,ar,eff,area:ew*eh/(w*h),over:mf&&c.fps>mf};
+  return {M,name,w,h,codec,mbps,conf,fixed,gop,maxfps,gbDay,cardDay,canHde,hde,dlDay,dl,ew,eh,ar,eff,area:ew*eh/(w*h),over:mf&&c.fps>mf};
 }
 function totals(){
   const per=S.cams.map(calcCam);
@@ -277,6 +290,7 @@ function renderCams(){
         <label>Hours rolled per camera per day<input type="number" id="h${i}" min="0" step="0.25" value="${c.hours}"></label>
         <label>Lens squeeze<select id="x${i}"></select></label>
       </div>
+      <label class="check" data-k="hdeWrap" hidden><input type="checkbox" id="e${i}"${c.hde?" checked":""}> Offload with Codex HDE (stored at about 60% of ARRIRAW; camera cards still fill at the full rate)</label>
       <div class="warnline" data-k="warn" hidden></div>
       <div class="readout">
         <div><small>Recorded</small><b data-k="rec"></b></div>
@@ -299,8 +313,10 @@ function renderCams(){
     $("m"+i).onchange=e=>{c.model=e.target.value;c.mi=0;c.ci=0;renderCams();update();};
     $("s"+i).onchange=e=>{c.mi=+e.target.value;c.ci=0;renderCams();update();};
     $("c"+i).onchange=e=>{c.ci=+e.target.value;update();};
+    $("e"+i).onchange=e=>{c.hde=e.target.checked;update();};
     $("x"+i).onchange=e=>{c.sq=+e.target.value;update();};
-    [["q","qty",1],["f","fps",1],["h","hours",0]].forEach(([p,k,min])=>{$(p+i).oninput=e=>{const v=parseFloat(e.target.value);c[k]=isFinite(v)&&v>=min?v:(min||0);update();};});
+    [["q","qty",1,999,1],["f","fps",1,100000,24],["h","hours",0,24,0]].forEach(([p,k,min,max,def])=>{$(p+i).oninput=e=>{let v=num(e.target.value,min,max,def);if(k==="qty")v=Math.round(v);c[k]=v;update();};
+      $(p+i).onblur=e=>{e.target.value=c[k];};});
     el.querySelector("[data-a=del]").onclick=()=>{S.cams.splice(i,1);if(!S.cams.length)S.cams.push(newCam());renderCams();update();};
     el.querySelector("[data-a=chart]").onclick=()=>openChart(i);
     el.querySelector("[data-a=chart2]").onclick=()=>openChart(i);
@@ -317,13 +333,16 @@ function update(){
     q("rec").textContent=`${p.w} x ${p.h}`;
     q("ext").textContent=`${p.ew} x ${p.eh} (${fmt(p.area*100,0)}% of frame)`;
     q("rate").textContent=`${fmt(p.mbps,0)} Mb/s`+(p.fixed?" max":"");
-    q("day").textContent=`${fmt(p.gbDay,0)} GB`;
+    q("day").textContent=`${fmt(p.gbDay,0)} GB`+(p.hde?" (HDE)":"");
+    q("hdeWrap").hidden=!p.canHde;
     q("dl").textContent=S.dCodec==="none"?"off":`${fmt(p.dlDay,0)} GB`;
     q("tot").textContent=`${fmt((p.gbDay+p.dlDay)*S.days/1000,2)} TB`;
     q("thumb").src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(chartSVG(i));
-    q("thumbT").textContent=`${fmt(p.ar,2)}:1 extraction ${p.ew} x ${p.eh} inside ${p.w} x ${p.h}`;
+    q("thumbT").textContent=`${arName()} extraction ${p.ew} x ${p.eh} inside ${p.w} x ${p.h}`;
     const w=q("warn"), msgs=[];
     if(p.over)msgs.push(`${c.fps} fps is above this mode's listed maximum (${p.maxfps} fps).`);
+    if(p.hde)msgs.push(`Cards fill at ${fmt(p.cardDay,0)} GB per day (full ARRIRAW). Storage is sized at the HDE estimate of ${fmt(p.gbDay,0)} GB per day.`);
+    if(p.gop&&c.fps!==24)msgs.push("Long GOP codec: rate held at the published figure up to 30 fps, then scaled.");
     if(p.fixed)msgs.push("Drone rate is DJI's published maximum, used as a ceiling at any frame rate.");
     if(p.conf==="L")msgs.push("This rate is an estimate. Record a test card before budgeting.");
     w.hidden=!msgs.length; w.textContent=msgs.join(" ");
@@ -341,8 +360,8 @@ function update(){
 
 function summaryRows(){
   const T=totals(), r=[["Project",S.project||"Untitled"],["Shoot days",S.days],["Delivery aspect ratio",fmt(targetAR(),2)+":1"],[]];
-  r.push(["Camera","Model","Qty","Mode","Recorded","Extraction","Codec","fps","Hours/day","Mb/s","GB/day (original)","GB/day (dailies)","TB shoot total","Confidence"]);
-  T.per.forEach((p,i)=>{const c=S.cams[i];r.push([String.fromCharCode(65+i%26),c.brand+" "+c.model,c.qty,p.name,p.w+"x"+p.h,p.ew+"x"+p.eh,p.codec,c.fps,c.hours,Math.round(p.mbps),Math.round(p.gbDay),Math.round(p.dlDay),((p.gbDay+p.dlDay)*S.days/1000).toFixed(2),p.conf]);});
+  r.push(["Camera","Model","Qty","Mode","Recorded","Extraction","Codec","fps","Hours/day","Mb/s","GB/day (on cards)","GB/day (stored original)","GB/day (dailies)","TB shoot total","Confidence"]);
+  T.per.forEach((p,i)=>{const c=S.cams[i];r.push([String.fromCharCode(65+i%26),c.brand+" "+c.model,c.qty,p.name,p.w+"x"+p.h,p.ew+"x"+p.eh,p.codec+(p.hde?" + HDE offload":""),c.fps,c.hours,Math.round(p.mbps),Math.round(p.cardDay),Math.round(p.gbDay),Math.round(p.dlDay),((p.gbDay+p.dlDay)*S.days/1000).toFixed(2),p.conf]);});
   r.push([],["Camera original TB",(T.ocn/1000).toFixed(2)],["Dailies TB",(T.dl/1000).toFixed(2)],["Buffer "+S.buffer+"% TB",(T.buf/1000).toFixed(2)],["One copy TB",(T.one/1000).toFixed(2)],["Copies",S.copies],["Total TB",(T.grand/1000).toFixed(2)]);
   return r;
 }
@@ -354,7 +373,7 @@ function chartSVG(i){
   const t=(tx,ty,s,str,anchor="start",fill="#fff",wt=400)=>`<text x="${tx}" y="${ty}" font-family="Helvetica,Arial,sans-serif" font-size="${s}" font-weight="${wt}" fill="${fill}" text-anchor="${anchor}">${esc(str)}</text>`;
   const L=u*6, corners=[[x,y,1,1],[x+p.ew,y,-1,1],[x,y+p.eh,1,-1],[x+p.ew,y+p.eh,-1,-1]].map(([a,b,dx,dy])=>`<path d="M${a+dx*L} ${b}H${a}V${b+dy*L}" fill="none" stroke="#ffd23f" stroke-width="${sw*2.5}"/>`).join("");
   const tri=(ax,ay,rot)=>`<path d="M0 0L${-u*1.6} ${-u*3}H${u*1.6}Z" fill="#ffd23f" transform="translate(${ax} ${ay}) rotate(${rot})"/>`;
-  const arLabel=fmt(p.ar,2)+":1";
+  const arLabel=arName();
   let grid=""; for(let k=1;k<10;k++){grid+=`<path d="M${W*k/10} 0V${H}M0 ${H*k/10}H${W}" stroke="#3a3f46" stroke-width="${sw*0.5}"/>`;}
   const shade=(p.ew<W||p.eh<H)?`<path fill-rule="evenodd" d="M0 0H${W}V${H}H0ZM${x} ${y}V${y+p.eh}H${x+p.ew}V${y}Z" fill="#000" fill-opacity=".45"/>`:"";
   const inX=x+u*3, fs=u*2.6;
@@ -370,13 +389,13 @@ ${t(inX,y+u*14.5,fs,`Recorded ${W} x ${H}  |  ${c.sq===1?"Spherical":c.sq+"x ana
 ${t(inX,y+p.eh-u*4,fs*1.3,`${arLabel} extraction  ${p.ew} x ${p.eh}`,"start","#ffd23f",700)}
 ${t(x+p.ew-u*3,y+p.eh-u*4,fs,`Camera ${String.fromCharCode(65+i%26)}  |  ${new Date().toISOString().slice(0,10)}`,"end")}
 ${t(cx,y+p.eh/2+u*14,fs*1.2,arLabel,"middle","#ffd23f",700)}
-${(p.eh<H)?t(cx,Math.max(fs*1.2,y-u*4),fs,`Full recorded frame ${W} x ${H} (${fmt(p.eff,2)}:1${c.sq===1?"":" desqueezed"})`,"middle","#cfd4da"):""}
+${(y>u*8)?t(cx,y-u*3,fs,`Full recorded frame ${W} x ${H} (${fmt(p.eff,2)}:1${c.sq===1?"":" desqueezed"})`,"middle","#cfd4da"):""}
 </svg>`;
 }
 let chartIdx=0;
 function openChart(i){chartIdx=i;const p=calcCam(S.cams[i]);$("dlgTitle").textContent=`Framing chart · Camera ${String.fromCharCode(65+i%26)} · ${S.cams[i].model}`;
   $("chartPrev").src="data:image/svg+xml;charset=utf-8,"+encodeURIComponent(chartSVG(i));
-  $("dlgNote").textContent=`Chart is drawn in recorded pixel space: ${p.w} x ${p.h}, with a centred ${fmt(p.ar,2)}:1 extraction of ${p.ew} x ${p.eh}. Load it in the monitor or post tool at 1:1 to check frame lines.`;
+  $("dlgNote").textContent=`Chart is drawn in recorded pixel space: ${p.w} x ${p.h}, with a centred ${arName()} extraction of ${p.ew} x ${p.eh}. Load it in the monitor or post tool at 1:1 to check frame lines.`;
   $("dlg").showModal();}
 function chartName(ext){const c=S.cams[chartIdx],p=calcCam(c);return `framing_${(c.model+"_"+p.w+"x"+p.h+"_"+fmt(p.ar,2)).replace(/[^a-z0-9.]+/gi,"-")}.${ext}`;}
 $("dlSvg").onclick=()=>download(chartName("svg"),new Blob([chartSVG(chartIdx)],{type:"image/svg+xml"}));
@@ -390,9 +409,9 @@ $("dlgClose").onclick=()=>$("dlg").close();
 
 function init(){
   $("project").value=S.project; $("director").value=S.director||""; $("dop").value=S.dop||""; $("project").oninput=e=>{S.project=e.target.value;save();};
-  $("days").value=S.days; $("days").oninput=e=>{const v=parseInt(e.target.value);S.days=v>0?v:1;update();};
+  $("days").value=S.days; $("days").oninput=e=>{S.days=Math.round(num(e.target.value,1,9999,1));update();}; $("days").onblur=e=>{e.target.value=S.days;};
   opt($("ar"),ARS.map((a,i)=>[i,a[0]]),S.arIdx); $("ar").onchange=e=>{S.arIdx=+e.target.value;update();};
-  $("arCustom").value=S.arCustom; $("arCustom").oninput=e=>{S.arCustom=parseFloat(e.target.value)||2.39;update();};
+  $("arCustom").value=S.arCustom; $("arCustom").oninput=e=>{S.arCustom=num(e.target.value,0.3,4,2.39);update();};
   seg("copies",[["1",1],["2",2],["3",3]],"copies");
   seg("dCodec",[["None","none"],["ProRes 422","422"],["ProRes 422 HQ","422hq"]],"dCodec");
   seg("dRes",[["HD 1920x1080","hd"],["UHD 3840x2160","uhd"]],"dRes");
@@ -405,7 +424,7 @@ $("copySum").onclick=()=>{const txt=summaryRows().map(r=>r.join("\t")).join("\n"
 $("csv").onclick=()=>download("shoot-data-estimate.csv",new Blob([summaryRows().map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\n")],{type:"text/csv"}));
 function saveCustom(){try{localStorage.setItem("sdcCustom",JSON.stringify(CUSTOM));}catch(e){} DATA=buildData((window.CAMERA_ROWS||[]).concat(CUSTOM)); $("nCount").textContent=CUSTOM.length?CUSTOM.length+" saved in this browser":"";}
 $("nAdd").onclick=()=>{const v=id=>$(id).value.trim(), r={brand:v("nBrand"),model:v("nModel"),sensor:v("nSensor"),mode:v("nMode"),w:parseInt(v("nW")),h:parseInt(v("nH")),codec:v("nCodec"),mbps24:parseFloat(v("nRate")),conf:"U",fixed:0,maxFps:parseFloat(v("nFps"))||""};
-  if(!r.brand||!r.model||!(r.w>0)||!(r.h>0)||!(r.mbps24>0)){toast("Fill in brand, model, width, height and Mb/s.");return;}
+  if(!r.brand||!r.model||!(r.w>=16&&r.w<=65536)||!(r.h>=16&&r.h<=65536)||!(r.mbps24>0&&r.mbps24<1e6)){toast("Fill in brand, model, width, height (16 to 65536 px) and Mb/s.");return;}
   CUSTOM.push(r);saveCustom();S.cams.push(newCam(r.brand,r.model,r.mode||(r.w+" x "+r.h),r.codec));renderCams();update();toast("Saved and added as a new camera row");};
 $("nCopy").onclick=()=>{if(!CUSTOM.length){toast("No saved cameras yet");return;}const txt=CUSTOM.map(r=>"  "+JSON.stringify(Object.assign({},r,{conf:"M"}))+",").join("\n");(navigator.clipboard?navigator.clipboard.writeText(txt):Promise.reject()).then(()=>toast("Copied. Paste into cameras.js")).catch(()=>toast("Copy blocked by the browser"));};
 $("nClear").onclick=()=>{CUSTOM=[];saveCustom();S.cams=S.cams.filter(c=>DATA[c.brand]&&DATA[c.brand][c.model]&&DATA[c.brand][c.model].m[c.mi]&&DATA[c.brand][c.model].m[c.mi][3][c.ci]);if(!S.cams.length)S=defaults();renderCams();update();};
@@ -445,16 +464,15 @@ function pdfChart(i){
   const R=9*k;for(let n=0;n<16;n+=2){const a0=n*Math.PI/8,a1=(n+1)*Math.PI/8;doc.triangle(cx,cy,cx+R*Math.cos(a0),cy+R*Math.sin(a0),cx+R*Math.cos(a1),cy+R*Math.sin(a1),"F");}
   doc.setLineWidth(0.3);doc.circle(cx,cy,R);doc.line(cx-R*2,cy,cx+R*2,cy);doc.line(cx,cy-R*2,cx,cy+R*2);
   // labels
-  const arL=fmt(p.ar,2)+":1";
+  const arL=arName();
   T(`${arL} EXTRACTION   ${p.ew} x ${p.eh}`,ex+3*k,ey+6*k,11,true);
   T(arL,ex+ex_w-3*k,ey+ex_h-3*k,11,true,"right");
-  if(p.eh<p.h)T(`FULL SENSOR MODE   ${p.w} x ${p.h}   (${fmt(p.eff,2)}:1${c.sq===1?"":" desqueezed"})`,fx+3*k,fy+5*k,8,true);
-  else if(p.ew<p.w){doc.setFont("helvetica","bold");doc.setFontSize(8*k);doc.text(`FULL SENSOR MODE  ${p.w} x ${p.h}`,fx+4*k,fy+fh-3*k,{angle:90});}
+  T(`FULL SENSOR MODE   ${p.w} x ${p.h}   (${fmt(p.eff,2)}:1${c.sq===1?"":" desqueezed"})   thick outer line`,fx,fy-1.8*k,8,true);
   // footer
-  const pass=p.ew>=3840, fyT=PH-m-15*k;
+  const pass=p.ew>=3840, dsq=Math.round(p.ew*c.sq), review=!pass&&c.sq>1&&dsq>=3840, fyT=PH-m-15*k;
   doc.setLineWidth(0.5);doc.rect(m,fyT-4*k,PW-2*m,19*k);
-  T(pass?"UHD CHECK: PASS":"UHD CHECK: BELOW 4K UHD",m+2*k,fyT+1*k,10,true);
-  T(pass?`Extraction is ${p.ew} photosites wide, at or above the 3840 needed for a 4K UHD deliverable without upscaling.`:`Extraction is ${p.ew} photosites wide, under the 3840 needed for a 4K UHD deliverable. Delivery in UHD would need upscaling.`,m+2*k,fyT+6*k,8,false);
+  T(pass?"UHD CHECK: PASS":review?"UHD CHECK: REVIEW (ANAMORPHIC)":"UHD CHECK: BELOW 4K UHD",m+2*k,fyT+1*k,10,true);
+  T(pass?`Extraction is ${p.ew} photosites wide, at or above the 3840 needed for a 4K UHD deliverable without upscaling.`:review?`Extraction is ${p.ew} photosites wide on the sensor and ${dsq} after ${c.sq}x desqueeze. Confirm with the delivery spec whether desqueezed width counts.`:`Extraction is ${p.ew} photosites wide, under the 3840 needed for a 4K UHD deliverable. Delivery in UHD would need upscaling.`,m+2*k,fyT+6*k,8,false);
   T(`Recorded ${p.w} x ${p.h}   |   Extraction ${p.ew} x ${p.eh} (${fmt(p.area*100,0)}% of frame), centred   |   ${uhdTxt||"Dashed UHD box not drawn for this mode"}`,m+2*k,fyT+10.5*k,8,false);
   T("Shoot square-on and level. Fill the frame so the thick outer line sits on the edge of the full sensor image.   Lens: ____________   Focal length: ________   Checked by: ____________",m+2*k,fyT+13.5*k,7,false,"left",70);
   try{download(chartName("pdf"),doc.output("blob"));}catch(e){toast("PDF export failed.");}
